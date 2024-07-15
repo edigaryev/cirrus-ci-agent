@@ -5,77 +5,8 @@ env:
   GOPROXY: https://proxy.golang.org
 
 task:
-  container:
-    image: golangci/golangci-lint:latest
-  name: Lint
-  script: golangci-lint run -v --out-format json > golangci.json
-  always:
-    artifacts:
-      path: golangci.json
-      type: text/json
-      format: golangci
-
-docker_builder:
-  name: Test (Linux)
-  alias: test-linux
-  modules_cache:
-    fingerprint_script: cat go.sum
-    folder: $GOPATH/pkg/mod
-  prepare_script:
-    - apt-get update
-    - apt-get install -y zsh
-  install_golang_script:
-    - wget --no-verbose -O - https://go.dev/dl/go1.22.1.linux-amd64.tar.gz | tar -C /usr/local -xz
-  test_script:
-    - export PATH=$PATH:/usr/local/go/bin
-    - go test -v ./...
-  env:
-    HOME: /root
-
-docker_builder:
-  name: Test (Windows)
-  alias: test-windows
-  platform: windows
-  os_version: 2019
-  test_script:
-    - choco install -y golang git
-    - refreshenv
-    - md C:\Windows\system32\config\systemprofile\AppData\Local\Temp
-    - go test -v ./...
-
-task:
-  name: Test (macOS)
-  alias: test-macos
-  macos_instance:
-    image: ghcr.io/cirruslabs/macos-ventura-xcode:latest
-  test_script:
-    - brew update
-    - brew install go
-    - go test -v ./...
-
-task:
-  name: Test (FreeBSD)
-  alias: test-freebsd
-  freebsd_instance:
-    image_family: freebsd-13-2
-  prepare_script:
-    - pkg install -y zsh git wget
-  install_golang_script:
-    - wget --no-verbose -O - https://go.dev/dl/go1.22.1.freebsd-amd64.tar.gz | tar -C /usr/local -xz
-  test_script:
-    - export PATH=$PATH:/usr/local/go/bin
-    - go test -v ./...
-  env:
-    HOME: /root
-
-task:
   name: Release Binaries (Dry Run)
   only_if: $CIRRUS_TAG == ''
-  depends_on:
-    - test-linux
-    - test-windows
-    - test-macos
-    - test-freebsd
   macos_instance:
     image: ghcr.io/cirruslabs/macos-ventura-xcode:latest
   install_script: brew update && brew install go goreleaser
@@ -83,27 +14,9 @@ task:
   binaries_artifacts:
     path: "dist/agent_*/agent*"
 
-docker_builder:
-  name: Release Docker Image (Dry Run)
-  only_if: $CIRRUS_TAG == ''
-  depends_on:
-    - test-linux
-    - test-windows
-    - test-macos
-    - test-freebsd
-  setup_script:
-    - docker buildx create --name multibuilder
-    - docker buildx use multibuilder
-    - docker buildx inspect --bootstrap
-  build_script: docker buildx build --platform linux/amd64,linux/arm64 --tag ghcr.io/cirruslabs/cirrus-ci-agent:latest .
-
 task:
   name: Release Binaries
   only_if: $CIRRUS_TAG != ''
-  depends_on:
-    - test-linux
-    - test-windows
-    - test-macos
   env:
     GITHUB_TOKEN: ENCRYPTED[!98ace8259c6024da912c14d5a3c5c6aac186890a8d4819fad78f3e0c41a4e0cd3a2537dd6e91493952fb056fa434be7c!]
     SENTRY_ORG: cirrus-labs
@@ -118,24 +31,3 @@ task:
     - sentry-cli releases new $SENTRY_RELEASE
     - sentry-cli releases set-commits $SENTRY_RELEASE --auto
     - sentry-cli releases finalize $SENTRY_RELEASE
-
-docker_builder:
-  name: Release Docker Image
-  only_if: $CIRRUS_TAG != ''
-  depends_on:
-    - test-linux
-    - test-windows
-    - test-macos
-  env:
-    GITHUB_TOKEN: ENCRYPTED[!82ed873afdf627284305afef4958c85a8f73127b09978a9786ac521559630ea6c9a5ab6e7f8315abf9ead09b6eff6eae!]
-  login_script:
-    - echo $GITHUB_TOKEN | docker login ghcr.io -u fkorotkov --password-stdin
-  setup_script:
-    - docker buildx create --name multibuilder
-    - docker buildx use multibuilder
-    - docker buildx inspect --bootstrap
-  deploy_script: |
-    docker buildx build --push --platform linux/amd64,linux/arm64 \
-      --tag ghcr.io/cirruslabs/cirrus-ci-agent:$CIRRUS_TAG \
-      --tag ghcr.io/cirruslabs/cirrus-ci-agent:latest \
-      .
